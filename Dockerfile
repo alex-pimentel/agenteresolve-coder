@@ -12,6 +12,9 @@ ARG CODE_SERVER_VERSION=4.140.0
 ARG OPENCODE_VERSION=1.18.34
 FROM codercom/code-server:${CODE_SERVER_VERSION}
 
+# ARGs globais só valem no FROM; redeclarar para usar no RUN.
+ARG OPENCODE_VERSION
+
 USER root
 
 # `supervisor` gerencia os dois processos. git/curl/openssh-client/dumb-init já
