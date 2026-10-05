@@ -1,0 +1,21 @@
+{
+	# O TLS é terminado no Traefik (Coolify). Aqui só roteamos por Host.
+	auto_https off
+}
+
+# Porta única exposta ao Traefik; distribui por Host para os dois backends.
+:8080 {
+	@opencode host coder.agenteresolve.com.br
+	handle @opencode {
+		reverse_proxy 127.0.0.1:4096
+	}
+
+	@codeserver host code.agenteresolve.com.br
+	handle @codeserver {
+		reverse_proxy 127.0.0.1:8081
+	}
+
+	handle {
+		respond "Not found" 404
+	}
+}
