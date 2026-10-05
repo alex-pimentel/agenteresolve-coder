@@ -23,7 +23,23 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends supervisor \
     && rm -rf /var/lib/apt/lists/*
 
-RUN echo "probe: pulando opencode"
+# opencode (binário glibc) baixado direto do release, pinado. Baixa o asset
+# `-baseline` se a CPU não tiver AVX2 (o build roda na própria VPS).
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64) a=x64 ;; \
+        arm64) a=arm64 ;; \
+        *) a=x64 ;; \
+    esac; \
+    if [ "$a" = "x64" ] && ! grep -qwi avx2 /proc/cpuinfo; then variant="-baseline"; else variant=""; fi; \
+    curl -fsSL -o /tmp/oc.tar.gz \
+        "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${a}${variant}.tar.gz"; \
+    tar -xzf /tmp/oc.tar.gz -C /tmp; \
+    mv /tmp/opencode /usr/local/bin/opencode; \
+    chmod 755 /usr/local/bin/opencode; \
+    rm -f /tmp/oc.tar.gz; \
+    opencode --version
 
 # Config default do opencode (tier global). O modelo padrão também pode vir do
 # OPENCODE_MODEL (vira OPENCODE_CONFIG_CONTENT no entrypoint).
@@ -43,9 +59,6 @@ ENV HOME=/home/opencode
 WORKDIR /home/opencode/agenteresolve
 
 EXPOSE 4096 8080
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS -u "${OPENCODE_SERVER_USERNAME:-opencode}:${OPENCODE_SERVER_PASSWORD}" http://127.0.0.1:4096/global/health || exit 1
 
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["supervisord", "-c", "/etc/supervisor/supervisord.conf", "-n"]
