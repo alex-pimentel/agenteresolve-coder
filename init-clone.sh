@@ -7,8 +7,19 @@ WORKSPACE="${WORKSPACE_DIR:-/workspace}"
 ORG="${GITHUB_ORG:-alex-pimentel}"
 DEPTH="${CLONE_DEPTH:-1}"
 
-# Os 24 repos Agenteresolve (todos públicos). Sobrescreva com CLONE_REPOS
-# (separado por vírgula ou espaço) para clonar um subconjunto/outra lista.
+# Sem prompt interativo: se faltar credencial para repo privado, falha em vez de travar.
+export GIT_TERMINAL_PROMPT=0
+
+# Token opcional (repos privados). Fica no env; NÃO vai para a URL (evita vazar
+# o token em mensagens de erro/log). O credential helper lê o env em runtime.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git config --global credential.helper \
+        '!f() { echo "username=x-access-token"; echo "password=${GITHUB_TOKEN}"; }; f'
+fi
+
+# Os 24 repos Agenteresolve (a maioria pública; alguns privados, ex. o site
+# `agenteresolve`). Sobrescreva com CLONE_REPOS (separado por vírgula ou espaço)
+# para clonar um subconjunto/outra lista.
 DEFAULT_REPOS="
 agenteresolve-translate agenteresolve-docuextract agenteresolve-askyourdocs
 agenteresolve-datachat agenteresolve-feedback agenteresolve-seo

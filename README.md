@@ -32,6 +32,7 @@ embutido do próprio opencode.
 | `OPENCODE_SERVER_USERNAME` | `opencode` | usuário do basic auth |
 | `OPENROUTER_API_KEY` | — | chave do provider OpenRouter |
 | `OPENCODE_MODEL` | (config do repo) | modelo padrão, ex.: `openrouter/openai/gpt-4o-mini` |
+| `GITHUB_TOKEN` | — | token para clonar repos **privados** (escopo `repo`); sem ele só os públicos |
 | `CLONE_REPOS` | lista dos 24 | repos a clonar (vírgula/espaço) |
 | `GITHUB_ORG` | `alex-pimentel` | org dos repos |
 | `CLONE_DEPTH` | `1` | profundidade do clone |
