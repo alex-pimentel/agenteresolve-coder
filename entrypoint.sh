@@ -1,6 +1,6 @@
 #!/bin/bash
 # Entrypoint: prepara o workspace (clone em background), aplica overrides de
-# config via env e executa o comando (por padrão, `opencode web`).
+# config via env e executa o supervisor (opencode web + code-server).
 set -euo pipefail
 
 HOME_DIR="${HOME:-/home/opencode}"
@@ -21,11 +21,9 @@ if [ -n "${OPENCODE_MODEL:-}" ]; then
     export OPENCODE_CONFIG_CONTENT="{\"model\":\"${OPENCODE_MODEL}\"}"
 fi
 
-# Salvaguarda: não subir servidor em todas as interfaces sem senha.
-if [ "${1:-}" = "opencode" ] && { [ "${2:-}" = "web" ] || [ "${2:-}" = "serve" ]; } \
-   && [[ " $* " == *" --hostname 0.0.0.0 "* ]] \
-   && [ -z "${OPENCODE_SERVER_PASSWORD:-}" ]; then
-    echo "agenteresolve-coder: recusando subir '$1 $2' em 0.0.0.0 sem OPENCODE_SERVER_PASSWORD" >&2
+# Os dois servidores ficam atrás do proxy (0.0.0.0). Exigem senha.
+if [ -z "${OPENCODE_SERVER_PASSWORD:-}" ]; then
+    echo "agenteresolve-coder: OPENCODE_SERVER_PASSWORD não definida; recusando subir." >&2
     exit 1
 fi
 
