@@ -3,9 +3,9 @@
 # config via env e executa o comando (por padrão, `opencode web`).
 set -euo pipefail
 
-# Clona os repos no volume em background (idempotente), para o servidor subir já.
+# Clona os repos no home em background (idempotente), para o servidor subir já.
 if [ "${CLONE_ON_START:-1}" = "1" ]; then
-    /usr/local/bin/init-clone.sh >>/workspace/.clone.log 2>&1 &
+    /usr/local/bin/init-clone.sh >>"${HOME:-/home/opencode}/.clone.log" 2>&1 &
 fi
 
 # Permite definir o modelo padrão pelo ambiente (ex.: openrouter/openai/gpt-4o-mini).

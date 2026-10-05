@@ -1,9 +1,11 @@
 #!/bin/bash
-# Clona (shallow) os repos Agenteresolve em /workspace se ainda não existirem.
+# Clona (shallow) os repos Agenteresolve em $HOME se ainda não existirem.
 # Idempotente: repos já clonados são pulados. Roda em background no start.
+# Nota: o diálogo "Abrir projeto" do opencode web só lista dentro do $HOME,
+# por isso o destino padrão é /home/opencode (e não /workspace).
 set -uo pipefail
 
-WORKSPACE="${WORKSPACE_DIR:-/workspace}"
+WORKSPACE="${WORKSPACE_DIR:-/home/opencode}"
 ORG="${GITHUB_ORG:-alex-pimentel}"
 DEPTH="${CLONE_DEPTH:-1}"
 

@@ -14,15 +14,17 @@ embutido do próprio opencode.
 - `git`, `openssh-client`, `curl`, `bash`
 - usuário non-root `opencode` (UID 1000)
 - auto-update desligado (`/etc/opencode/opencode.json`, tier gerenciado)
-- `entrypoint.sh` que clona os 24 repos Agenteresolve em `/workspace` (shallow,
-  em background, idempotente) e sobe `opencode web --hostname 0.0.0.0 --port 4096`
+- `entrypoint.sh` que clona os 24 repos Agenteresolve em `$HOME` (`/home/opencode`,
+  shallow, em background, idempotente) e sobe `opencode web --hostname 0.0.0.0 --port 4096`
 
-## Volumes persistentes (montados pelo Coolify)
+## Volume persistente (montado pelo Coolify)
 
 | Caminho | Conteúdo |
 | --- | --- |
-| `/home/opencode` | credenciais (`auth.json`), sessões, config, cache |
-| `/workspace` | os repos clonados |
+| `/home/opencode` | credenciais (`auth.json`), sessões, config, cache **e os repos clonados** (`/home/opencode/<repo>`) |
+
+> Os repos ficam dentro do `$HOME` de propósito: o diálogo **"Abrir projeto"** do
+> opencode web só lista diretórios sob o home (não navega para `/workspace`).
 
 ## Variáveis de ambiente
 
@@ -46,7 +48,6 @@ docker run --rm -p 4096:4096 \
   -e OPENCODE_SERVER_PASSWORD=secret \
   -e OPENROUTER_API_KEY=sk-or-... \
   -v coder-home:/home/opencode \
-  -v coder-workspace:/workspace \
   agenteresolve-coder
 # http://localhost:4096 (login: opencode / secret)
 ```

@@ -24,8 +24,8 @@ RUN apk add --no-cache \
 
 RUN addgroup -g "$GID" opencode \
     && adduser -D -u "$UID" -G opencode -s /bin/bash opencode \
-    && mkdir -p /workspace /home/opencode/.config/opencode \
-    && chown -R opencode:opencode /workspace /home/opencode
+    && mkdir -p /home/opencode/.config/opencode \
+    && chown -R opencode:opencode /home/opencode
 
 # Config default (tier global): modelo padrão no OpenRouter. Sobrescrevível pelo
 # OPENCODE_MODEL via env (vira OPENCODE_CONFIG_CONTENT no entrypoint).
@@ -42,7 +42,9 @@ RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/init-clone.sh \
 
 USER opencode
 ENV HOME=/home/opencode
-WORKDIR /workspace
+# HOME é o diretório de trabalho: o diálogo "Abrir projeto" do opencode web só
+# navega dentro do $HOME, então os repos precisam ficar aqui (não em /workspace).
+WORKDIR /home/opencode
 
 EXPOSE 4096
 
