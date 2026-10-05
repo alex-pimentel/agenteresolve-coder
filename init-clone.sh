@@ -1,11 +1,12 @@
 #!/bin/bash
-# Clona (shallow) os repos Agenteresolve em $HOME se ainda não existirem.
+# Clona (shallow) os repos Agenteresolve em $HOME/agenteresolve.
 # Idempotente: repos já clonados são pulados. Roda em background no start.
 # Nota: o diálogo "Abrir projeto" do opencode web só lista dentro do $HOME,
-# por isso o destino padrão é /home/opencode (e não /workspace).
+# por isso a pasta fica sob /home/opencode; e o opencode inicia com cwd nela,
+# tornando-a o projeto que contém todos os repos.
 set -uo pipefail
 
-WORKSPACE="${WORKSPACE_DIR:-/home/opencode}"
+WORKSPACE="${WORKSPACE_DIR:-$HOME/agenteresolve}"
 ORG="${GITHUB_ORG:-alex-pimentel}"
 DEPTH="${CLONE_DEPTH:-1}"
 
@@ -35,6 +36,16 @@ REPOS="${CLONE_REPOS:-$DEFAULT_REPOS}"
 REPOS="${REPOS//,/ }"
 
 mkdir -p "$WORKSPACE"
+
+# Migração de layout antigo: repos clonados direto no $HOME -> $WORKSPACE.
+for repo in $REPOS; do
+    [ -n "$repo" ] || continue
+    if [ -d "$HOME/$repo/.git" ] && [ ! -d "$WORKSPACE/$repo/.git" ]; then
+        echo "[init-clone] -> movendo $repo para $WORKSPACE"
+        mv "$HOME/$repo" "$WORKSPACE/$repo" || echo "[init-clone] aviso: falha ao mover $repo" >&2
+    fi
+done
+
 cd "$WORKSPACE" || exit 1
 
 echo "[init-clone] $(date -Iseconds) workspace=$WORKSPACE org=$ORG depth=$DEPTH"

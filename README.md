@@ -14,17 +14,21 @@ embutido do próprio opencode.
 - `git`, `openssh-client`, `curl`, `bash`
 - usuário non-root `opencode` (UID 1000)
 - auto-update desligado (`/etc/opencode/opencode.json`, tier gerenciado)
-- `entrypoint.sh` que clona os 24 repos Agenteresolve em `$HOME` (`/home/opencode`,
-  shallow, em background, idempotente) e sobe `opencode web --hostname 0.0.0.0 --port 4096`
+- `entrypoint.sh` que inicia em `~/agenteresolve` (o projeto) e dispara o clone dos 24
+  repos em `$HOME/agenteresolve/<repo>` (shallow, em background, idempotente), e sobe
+  `opencode web --hostname 0.0.0.0 --port 4096`
 
 ## Volume persistente (montado pelo Coolify)
 
 | Caminho | Conteúdo |
 | --- | --- |
-| `/home/opencode` | credenciais (`auth.json`), sessões, config, cache **e os repos clonados** (`/home/opencode/<repo>`) |
+| `/home/opencode` | credenciais (`auth.json`), sessões, config, cache |
+| `/home/opencode/agenteresolve` | **o projeto**: os 24 repos clonados (`<repo>/`) |
 
-> Os repos ficam dentro do `$HOME` de propósito: o diálogo **"Abrir projeto"** do
-> opencode web só lista diretórios sob o home (não navega para `/workspace`).
+> Os repos ficam sob o `$HOME` (em `~/agenteresolve`) de propósito: o diálogo
+> **"Abrir projeto"** do opencode web só lista diretórios sob o home. O opencode
+> inicia com `cwd` em `~/agenteresolve`, então esse é o projeto ativo — todos os
+> repos ficam acessíveis ao mesmo tempo.
 
 ## Variáveis de ambiente
 

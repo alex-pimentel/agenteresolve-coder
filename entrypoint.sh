@@ -3,9 +3,17 @@
 # config via env e executa o comando (por padrão, `opencode web`).
 set -euo pipefail
 
-# Clona os repos no home em background (idempotente), para o servidor subir já.
+HOME_DIR="${HOME:-/home/opencode}"
+PROJECT_DIR="$HOME_DIR/agenteresolve"
+
+# O opencode usa o cwd como projeto. Iniciamos dentro de ~/agenteresolve, que
+# contém todos os repos, para trabalhar com todos ao mesmo tempo.
+mkdir -p "$PROJECT_DIR"
+cd "$PROJECT_DIR"
+
+# Clona/move os repos em background (idempotente), para o servidor subir já.
 if [ "${CLONE_ON_START:-1}" = "1" ]; then
-    /usr/local/bin/init-clone.sh >>"${HOME:-/home/opencode}/.clone.log" 2>&1 &
+    /usr/local/bin/init-clone.sh >>"$HOME_DIR/.clone.log" 2>&1 &
 fi
 
 # Permite definir o modelo padrão pelo ambiente (ex.: openrouter/openai/gpt-4o-mini).

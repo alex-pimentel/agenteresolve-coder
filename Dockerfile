@@ -24,7 +24,7 @@ RUN apk add --no-cache \
 
 RUN addgroup -g "$GID" opencode \
     && adduser -D -u "$UID" -G opencode -s /bin/bash opencode \
-    && mkdir -p /home/opencode/.config/opencode \
+    && mkdir -p /home/opencode/.config/opencode /home/opencode/agenteresolve \
     && chown -R opencode:opencode /home/opencode
 
 # Config default (tier global): modelo padrão no OpenRouter. Sobrescrevível pelo
@@ -42,8 +42,8 @@ RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/init-clone.sh \
 
 USER opencode
 ENV HOME=/home/opencode
-# HOME é o diretório de trabalho: o diálogo "Abrir projeto" do opencode web só
-# navega dentro do $HOME, então os repos precisam ficar aqui (não em /workspace).
+# WORKDIR fica no home (sempre existe); o entrypoint faz `cd ~/agenteresolve`,
+# que contém todos os repos, e é o projeto usado pelo opencode.
 WORKDIR /home/opencode
 
 EXPOSE 4096
