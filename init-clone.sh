@@ -37,14 +37,25 @@ REPOS="${REPOS//,/ }"
 
 mkdir -p "$WORKSPACE"
 
-# Migração de layout antigo: repos clonados direto no $HOME -> $WORKSPACE.
+# Limpa layout antigo: repos clonados direto no $HOME (fora do WORKSPACE).
+# (o repo do site chama-se `agenteresolve`; evita colidir com a pasta do projeto)
 for repo in $REPOS; do
     [ -n "$repo" ] || continue
-    if [ -d "$HOME/$repo/.git" ] && [ ! -d "$WORKSPACE/$repo/.git" ]; then
-        echo "[init-clone] -> movendo $repo para $WORKSPACE"
-        mv "$HOME/$repo" "$WORKSPACE/$repo" || echo "[init-clone] aviso: falha ao mover $repo" >&2
+    src="$HOME/$repo"
+    [ "$src" = "$WORKSPACE" ] && continue
+    case "$src/" in "$WORKSPACE"/*) continue ;; esac
+    if [ -d "$src/.git" ]; then
+        rm -rf "$src"
+        echo "[init-clone] - removido layout antigo: $src"
     fi
 done
+
+# Auto-reparo: se o próprio WORKSPACE virou um repo git (colisão de layout),
+# limpa o conteúdo para re-clonar tudo no formato correto.
+if [ -d "$WORKSPACE/.git" ]; then
+    echo "[init-clone] workspace corrompido; limpando $WORKSPACE"
+    find "$WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+fi
 
 cd "$WORKSPACE" || exit 1
 
