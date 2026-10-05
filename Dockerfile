@@ -64,6 +64,9 @@ COPY opencode.json /home/opencode/.config/opencode/opencode.json
 COPY opencode.managed.json /etc/opencode/opencode.json
 
 COPY Caddyfile /etc/caddy/Caddyfile
+# Config fixa do code-server (ignora config persistido no volume, que pode ter
+# bind-addr conflitante). O `--config` abaixo aponta para este arquivo.
+COPY code-server-config.yaml /etc/code-server/config.yaml
 COPY supervisord.conf /etc/supervisor/supervisord.conf
 COPY entrypoint.sh init-clone.sh /usr/local/bin/
 RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/init-clone.sh \
