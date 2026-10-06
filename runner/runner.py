@@ -29,7 +29,7 @@ GITHUB_ORG = os.environ.get("GITHUB_ORG", "alex-pimentel")
 OPENCODE_MODEL = os.environ.get("OPENCODE_MODEL", "")
 AGENT_CMD = os.environ.get("RUNNER_AGENT_CMD", "")  # testing override
 PORT = int(os.environ.get("RUNNER_PORT", "8090"))
-AGENT_TIMEOUT = int(os.environ.get("RUNNER_AGENT_TIMEOUT", "3600"))
+AGENT_TIMEOUT = int(os.environ.get("RUNNER_AGENT_TIMEOUT", "900"))
 
 BRANCH_PREFIX = {
     "feature": "feature",
@@ -64,6 +64,7 @@ def ensure_repo(slug, github_url, default_branch):
     run(["git", "fetch", "origin", "--prune"], cwd=path)
     run(["git", "checkout", default_branch], cwd=path)
     run(["git", "reset", "--hard", f"origin/{default_branch}"], cwd=path)
+    log(f"repo ready at {path}")
     return path
 
 
@@ -76,8 +77,19 @@ def run_agent(prompt, cwd):
             cmd += ["--model", OPENCODE_MODEL]
         cmd += [prompt]
 
-    result = run(cmd, cwd=cwd, timeout=AGENT_TIMEOUT)
+    log(f"agent cmd: {' '.join(cmd[:6])} ...")
+
+    try:
+        result = run(cmd, cwd=cwd, timeout=AGENT_TIMEOUT)
+    except subprocess.TimeoutExpired as error:
+        partial = (error.stdout or b"")[-1500:]
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", "replace")
+        log(f"agent timeout after {AGENT_TIMEOUT}s")
+        return 124, "TIMEOUT: " + partial
+
     output = (result.stdout or "")[-4000:] + (result.stderr or "")[-2000:]
+    log(f"agent output tail: {output[-600:].replace(chr(10), ' ')}")
     return result.returncode, output
 
 
@@ -202,6 +214,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.endswith("/ping"):
             return self._send(200, {"ok": True, "service": "agenteresolve-runner"})
+        if self.path.endswith("/diag"):
+            if RUNNER_TOKEN and self.headers.get("X-Runner-Token") != RUNNER_TOKEN:
+                return self._send(401, {"ok": False, "error": "unauthorized"})
+            version = run(["opencode", "--version"], timeout=30)
+            return self._send(200, {
+                "ok": True,
+                "opencode": (version.stdout or version.stderr or "").strip(),
+                "model": OPENCODE_MODEL or "(opencode.json)",
+                "has_openrouter_key": bool(os.environ.get("OPENROUTER_API_KEY")),
+                "has_github_token": bool(GITHUB_TOKEN),
+                "agent_cmd_override": bool(AGENT_CMD),
+                "workspace": WORKSPACE,
+            })
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
