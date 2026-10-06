@@ -68,19 +68,22 @@ def ensure_repo(slug, github_url, default_branch):
     return path
 
 
-def run_agent(prompt, cwd):
+def run_agent(prompt, cwd, env=None, model=None):
     if AGENT_CMD:
         cmd = AGENT_CMD.split() + [prompt]
     else:
         cmd = ["opencode", "run", "--auto"]
-        if OPENCODE_MODEL:
-            cmd += ["--model", OPENCODE_MODEL]
+        chosen = model or OPENCODE_MODEL
+        if chosen:
+            cmd += ["--model", chosen]
         cmd += [prompt]
 
     log(f"agent cmd: {' '.join(cmd[:6])} ...")
 
     try:
-        result = run(cmd, cwd=cwd, timeout=AGENT_TIMEOUT)
+        result = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT, env=env
+        )
     except subprocess.TimeoutExpired as error:
         partial = (error.stdout or b"")[-1500:]
         if isinstance(partial, bytes):
@@ -91,6 +94,22 @@ def run_agent(prompt, cwd):
     output = (result.stdout or "")[-4000:] + (result.stderr or "")[-2000:]
     log(f"agent output tail: {output[-600:].replace(chr(10), ' ')}")
     return result.returncode, output
+
+
+def agent_env_and_model(payload):
+    """Build the subprocess env/model from the LLM config sent by the site."""
+    llm = payload.get("llm") or {}
+    env = dict(os.environ)
+    api_key = llm.get("api_key")
+    if isinstance(api_key, str) and api_key:
+        env["OPENROUTER_API_KEY"] = api_key
+
+    model = llm.get("model")
+    oc_model = None
+    if isinstance(model, str) and model:
+        oc_model = model if model.startswith("openrouter/") else f"openrouter/{model}"
+
+    return env, oc_model
 
 
 def create_pr(slug, branch, base, title, body):
@@ -143,7 +162,8 @@ def implement(payload):
         f"Descrição:\n{card.get('description') or '(sem descrição)'}\n"
     )
 
-    code, output = run_agent(prompt, path)
+    env, oc_model = agent_env_and_model(payload)
+    code, output = run_agent(prompt, path, env=env, model=oc_model)
     log(f"agent finished card={card.get('id')} exit={code}")
 
     status = run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
@@ -192,7 +212,8 @@ def review(payload):
         "Aponte riscos, bugs, testes faltando e bloqueios de merge. Seja objetivo e curto."
     )
 
-    _, output = run_agent(prompt, path)
+    env, oc_model = agent_env_and_model(payload)
+    _, output = run_agent(prompt, path, env=env, model=oc_model)
 
     return {"ok": True, "summary": output[-2000:]}
 
@@ -230,7 +251,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.endswith("/agentcheck"):
             if RUNNER_TOKEN and self.headers.get("X-Runner-Token") != RUNNER_TOKEN:
                 return self._send(401, {"ok": False, "error": "unauthorized"})
-            code, output = run_agent("Responda apenas: ok", WORKSPACE)
+            env = dict(os.environ)
+            key = self.headers.get("X-OpenRouter-Key")
+            if key:
+                env["OPENROUTER_API_KEY"] = key
+            model = self.headers.get("X-Model")
+            oc_model = model if model and model.startswith("openrouter/") else (f"openrouter/{model}" if model else None)
+            code, output = run_agent("Responda apenas: ok", WORKSPACE, env=env, model=oc_model)
             return self._send(200, {"ok": code == 0, "exit": code, "output": output[-1500:]})
         return self._send(404, {"ok": False, "error": "not found"})
 
