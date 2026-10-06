@@ -227,6 +227,11 @@ class Handler(BaseHTTPRequestHandler):
                 "agent_cmd_override": bool(AGENT_CMD),
                 "workspace": WORKSPACE,
             })
+        if self.path.endswith("/agentcheck"):
+            if RUNNER_TOKEN and self.headers.get("X-Runner-Token") != RUNNER_TOKEN:
+                return self._send(401, {"ok": False, "error": "unauthorized"})
+            code, output = run_agent("Responda apenas: ok", WORKSPACE)
+            return self._send(200, {"ok": code == 0, "exit": code, "output": output[-1500:]})
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
