@@ -44,6 +44,10 @@ def run(cmd, cwd=None, timeout=600):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
 
 
+def log(message):
+    print(f"runner: {message}", file=sys.stderr, flush=True)
+
+
 def repo_dir(slug):
     return os.path.join(WORKSPACE, slug)
 
@@ -111,6 +115,7 @@ def implement(payload):
         return {"ok": False, "error": "repository.slug ausente"}
 
     default_branch = repo.get("default_branch") or "main"
+    log(f"implement start card={card.get('id')} slug={slug}")
     path = ensure_repo(slug, repo.get("github_url"), default_branch)
 
     prefix = BRANCH_PREFIX.get(card.get("type"), "feature")
@@ -127,9 +132,11 @@ def implement(payload):
     )
 
     code, output = run_agent(prompt, path)
+    log(f"agent finished card={card.get('id')} exit={code}")
 
     status = run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
     if not status:
+        log(f"no changes card={card.get('id')}")
         return {"ok": False, "error": "Agente não produziu alterações.", "summary": output[-1200:]}
 
     run(["git", "config", "user.email", "orchestrator@agenteresolve.local"], cwd=path)
@@ -144,6 +151,7 @@ def implement(payload):
 
     push = run(["git", "push", "-u", "origin", branch, "--force"], cwd=path)
     if push.returncode != 0:
+        log(f"push failed card={card.get('id')}: {push.stderr[-200:]}")
         return {"ok": False, "error": "push falhou: " + push.stderr[-400:], "branch": branch}
 
     pr_url = create_pr(
@@ -153,6 +161,7 @@ def implement(payload):
         f"{card.get('title', 'task')} (card #{card.get('id')})",
         output[-1500:] or "Implementado pelo orquestrador Agenteresolve.",
     )
+    log(f"done card={card.get('id')} branch={branch} pr={pr_url}")
 
     return {"ok": True, "branch": branch, "pr_url": pr_url, "summary": output[-1500:]}
 
@@ -189,6 +198,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.endswith("/ping"):
+            return self._send(200, {"ok": True, "service": "agenteresolve-runner"})
+        return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
         if RUNNER_TOKEN and self.headers.get("X-Runner-Token") != RUNNER_TOKEN:
