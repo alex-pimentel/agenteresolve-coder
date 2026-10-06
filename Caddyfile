@@ -7,7 +7,14 @@
 :8080 {
 	@opencode host coder.agenteresolve.com.br
 	handle @opencode {
-		reverse_proxy 127.0.0.1:4096
+		# Coding runner (chamado pelo orquestrador). O prefixo /runner é removido.
+		handle_path /runner/* {
+			reverse_proxy 127.0.0.1:8090
+		}
+
+		handle {
+			reverse_proxy 127.0.0.1:4096
+		}
 	}
 
 	@codeserver host code.agenteresolve.com.br

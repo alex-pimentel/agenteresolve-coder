@@ -24,7 +24,7 @@ USER root
 # `supervisor` gerencia os processos. git/curl/openssh-client/dumb-init já vêm
 # na imagem base.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends supervisor \
+    && apt-get install -y --no-install-recommends supervisor python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Caddy (proxy interno), pinado.
@@ -69,7 +69,8 @@ COPY Caddyfile /etc/caddy/Caddyfile
 COPY code-server-config.yaml /etc/code-server/config.yaml
 COPY supervisord.conf /etc/supervisor/supervisord.conf
 COPY entrypoint.sh init-clone.sh /usr/local/bin/
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/init-clone.sh \
+COPY runner/runner.py /usr/local/bin/runner.py
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/init-clone.sh /usr/local/bin/runner.py \
     && mkdir -p /home/opencode/.config/opencode /home/opencode/agenteresolve \
     && chown -R 1000:1000 /home/opencode
 
