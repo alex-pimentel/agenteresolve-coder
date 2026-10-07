@@ -18,6 +18,7 @@ Only the Python standard library is used.
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 import urllib.error
@@ -33,6 +34,25 @@ OPENCODE_MODEL = os.environ.get("OPENCODE_MODEL", "")
 AGENT_CMD = os.environ.get("RUNNER_AGENT_CMD", "")
 PORT = int(os.environ.get("RUNNER_PORT", "8090"))
 AGENT_TIMEOUT = int(os.environ.get("RUNNER_AGENT_TIMEOUT", "900"))
+
+
+def config():
+    return {
+        "home": os.environ.get("HOME", "/home/opencode"),
+        "workspace": os.environ.get("WORKSPACE_DIR", os.path.join(os.environ.get("HOME", "/home/opencode"), "agenteresolve")),
+        "runner_token": os.environ.get("RUNNER_TOKEN", ""),
+        "github_token": os.environ.get("GITHUB_TOKEN", ""),
+        "github_org": os.environ.get("GITHUB_ORG", "alex-pimentel"),
+        "opencode_model": os.environ.get("OPENCODE_MODEL", ""),
+        "agent_cmd": os.environ.get("RUNNER_AGENT_CMD", ""),
+        "agent_mode": os.environ.get("RUNNER_AGENT_MODE", "llm"),
+        "skip_push": os.environ.get("RUNNER_SKIP_PUSH", "0") == "1",
+        "gate": os.environ.get("RUNNER_GATE", "0") == "1",
+        "max_iterations": int(os.environ.get("RUNNER_MAX_ITERATIONS", "2")),
+        "port": int(os.environ.get("RUNNER_PORT", "8090")),
+        "agent_timeout": int(os.environ.get("RUNNER_AGENT_TIMEOUT", "900")),
+    }
+
 
 BRANCH_PREFIX = {
     "feature": "feature",
@@ -138,29 +158,32 @@ def safe_path(base, relative):
 
 
 def run_agent(prompt, cwd, env=None, model=None):
-    if AGENT_CMD:
-        cmd = AGENT_CMD.split() + [prompt]
+    cfg = config()
+    if cfg["agent_cmd"]:
+        cmd = cfg["agent_cmd"].split() + [prompt]
     else:
         cmd = ["opencode", "run", "--auto"]
-        chosen = model or OPENCODE_MODEL
+        chosen = model or cfg["opencode_model"]
         if chosen:
             cmd += ["--model", chosen]
         cmd += [prompt]
 
     log(f"agent cmd: {' '.join(cmd[:6])} ...")
 
+    process = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=env, start_new_session=True,
+    )
     try:
-        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT, env=env)
-    except subprocess.TimeoutExpired as error:
-        partial = (error.stdout or b"")[-1500:]
-        if isinstance(partial, bytes):
-            partial = partial.decode("utf-8", "replace")
-        log(f"agent timeout after {AGENT_TIMEOUT}s")
+        stdout, stderr = process.communicate(timeout=cfg["agent_timeout"])
+        output = (stdout or "")[-4000:] + (stderr or "")[-2000:]
+        return process.returncode, output
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        partial = ((stdout or "") + (stderr or ""))[-1500:]
+        log(f"agent timeout after {cfg['agent_timeout']}s")
         return 124, "TIMEOUT: " + partial
-
-    output = (result.stdout or "")[-4000:] + (result.stderr or "")[-2000:]
-    log(f"agent output tail: {output[-600:].replace(chr(10), ' ')}")
-    return result.returncode, output
 
 
 def create_pr(slug, branch, base, title, body):
