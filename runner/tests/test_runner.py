@@ -149,3 +149,25 @@ class ReviewViaAgentTest(unittest.TestCase):
             })
             self.assertTrue(result["ok"])
             self.assertIn("OK:", result["summary"])
+
+
+class GateTest(unittest.TestCase):
+    def test_detects_php_stack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, "composer.json"), "w").write("{}")
+            runner = load_runner({"RUNNER_TOKEN": "t"})
+            commands = runner.detect_gate_commands(tmp)
+            self.assertTrue(any("pint" in " ".join(c) for c in commands))
+
+    def test_gate_reports_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = load_runner({"RUNNER_TOKEN": "t", "RUNNER_GATE_CMD": "bash -c 'exit 1'"})
+            ok, output = runner.run_gate(tmp)
+            self.assertFalse(ok)
+            self.assertIn("gate", output.lower())
+
+    def test_gate_reports_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = load_runner({"RUNNER_TOKEN": "t", "RUNNER_GATE_CMD": "bash -c 'exit 0'"})
+            ok, output = runner.run_gate(tmp)
+            self.assertTrue(ok)

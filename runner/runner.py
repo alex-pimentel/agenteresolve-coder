@@ -18,6 +18,8 @@ Only the Python standard library is used.
 """
 import json
 import os
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -69,6 +71,37 @@ def log(message):
 
 def run(cmd, cwd=None, timeout=600):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+
+
+def detect_gate_commands(path):
+    commands = []
+    if os.path.isfile(os.path.join(path, "composer.json")):
+        commands += [["vendor/bin/pint", "--test"], ["vendor/bin/phpstan", "analyse", "--no-progress"], ["php", "artisan", "test", "--compact"]]
+    if os.path.isfile(os.path.join(path, "package.json")):
+        commands += [["npm", "run", "lint"], ["npm", "run", "types"], ["npm", "test", "--", "--run"]]
+    if os.path.isfile(os.path.join(path, "pyproject.toml")) or os.path.isfile(os.path.join(path, "requirements.txt")):
+        commands += [["ruff", "check", "."], ["pytest", "-q"]]
+    return commands
+
+
+def run_gate(path):
+    override = os.environ.get("RUNNER_GATE_CMD")
+    commands = [shlex.split(override)] if override else detect_gate_commands(path)
+    if not commands:
+        return True, "gate: nenhum comando detectado (skipped)."
+
+    failures = []
+    for command in commands:
+        if override is None and shutil.which(command[0]) is None:
+            log(f"gate skip (missing): {command[0]}")
+            continue
+        result = run(command, cwd=path, timeout=1800)
+        if result.returncode != 0:
+            failures.append(f"gate falhou: {' '.join(command)}\n{(result.stdout or '')[-1500:]}{(result.stderr or '')[-1500:]}")
+
+    if failures:
+        return False, "\n\n".join(failures)
+    return True, "gate: todos os comandos passaram."
 
 
 def repo_dir(slug):
