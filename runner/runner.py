@@ -331,12 +331,25 @@ def agent_task_prompt(card, path):
 
 
 def run_agent_implement(card, path, llm):
+    cfg = config()
     env, model = agent_env_and_model(llm)
-    code, output = run_agent(agent_task_prompt(card, path), cwd=path, env=env, model=model)
-    if code != 0:
-        log(f"opencode agent failed card={card.get('id')} code={code}")
-        return None
-    return output[-1500:]
+    prompt = agent_task_prompt(card, path)
+    last_output = ""
+    for attempt in range(1, cfg["max_iterations"] + 1):
+        code, output = run_agent(prompt, cwd=path, env=env, model=model)
+        last_output = output
+        if code != 0:
+            log(f"opencode agent failed card={card.get('id')} attempt={attempt} code={code}")
+            return None
+        if not cfg["gate"]:
+            return output[-1500:]
+        ok, gate_output = run_gate(path)
+        if ok:
+            return (output[-1000:] + "\n" + gate_output)[-1500:]
+        log(f"gate failed card={card.get('id')} attempt={attempt}")
+        prompt = agent_task_prompt(card, path) + "\n\nO gate de qualidade falhou. Corrija:\n" + gate_output[-3000:]
+    log(f"gate exhausted card={card.get('id')} after {cfg['max_iterations']} attempts")
+    return None
 
 
 def run_llm_implement(card, path, llm):
