@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Agenteresolve coding runner.
 
-HTTP service that the orchestrator (website) calls to implement/review a card
+HTTP service the orchestrator (website) calls to implement/review a card
 inside the coder container. It clones/updates the target repository, creates a
-branch, runs the opencode agent headlessly, commits, pushes and opens a PR.
+branch, produces the changes (via the LLM config sent by the orchestrator, or
+optionally via the opencode CLI), commits, pushes and opens a PR.
 
 Endpoints:
-    POST /implement  { card, repository } -> { ok, branch, pr_url, summary }
-    POST /review     { card, repository } -> { ok, summary }
+    POST /implement  { card, repository, llm } -> { ok, branch, pr_url, summary }
+    POST /review     { card, repository, llm } -> { ok, summary }
+    GET  /ping
+    GET  /diag       (X-Runner-Token)
+    GET  /agentcheck (X-Runner-Token, X-OpenRouter-Key, X-Model)
 
 Auth: header `X-Runner-Token` must equal RUNNER_TOKEN.
-
-Only the Python standard library is used (no pip installs).
+Only the Python standard library is used.
 """
 import json
 import os
@@ -27,7 +30,7 @@ RUNNER_TOKEN = os.environ.get("RUNNER_TOKEN", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_ORG = os.environ.get("GITHUB_ORG", "alex-pimentel")
 OPENCODE_MODEL = os.environ.get("OPENCODE_MODEL", "")
-AGENT_CMD = os.environ.get("RUNNER_AGENT_CMD", "")  # testing override
+AGENT_CMD = os.environ.get("RUNNER_AGENT_CMD", "")
 PORT = int(os.environ.get("RUNNER_PORT", "8090"))
 AGENT_TIMEOUT = int(os.environ.get("RUNNER_AGENT_TIMEOUT", "900"))
 
@@ -40,12 +43,12 @@ BRANCH_PREFIX = {
 }
 
 
-def run(cmd, cwd=None, timeout=600):
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-
-
 def log(message):
     print(f"runner: {message}", file=sys.stderr, flush=True)
+
+
+def run(cmd, cwd=None, timeout=600):
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
 
 
 def repo_dir(slug):
@@ -68,6 +71,61 @@ def ensure_repo(slug, github_url, default_branch):
     return path
 
 
+def repo_context(path):
+    listing = run(["git", "ls-files"], cwd=path).stdout.splitlines()[:120]
+    readme = ""
+    for name in ("README.md", "README", "readme.md"):
+        full = os.path.join(path, name)
+        if os.path.isfile(full):
+            with open(full, encoding="utf-8", errors="replace") as handle:
+                readme = handle.read()[:2000]
+            break
+    return "Arquivos do repositório:\n" + "\n".join(listing) + "\n\nREADME (trecho):\n" + readme
+
+
+def llm_chat(llm, messages, max_tokens=2500):
+    base = (llm.get("base_url") or "").rstrip("/")
+    key = llm.get("api_key")
+    model = llm.get("model")
+    if not base or not model:
+        raise RuntimeError("llm.base_url/model ausentes")
+
+    body = json.dumps({
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+    }).encode()
+
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = "Bearer " + key
+
+    request = urllib.request.Request(base + "/chat/completions", data=body, method="POST", headers=headers)
+    with urllib.request.urlopen(request, timeout=180) as response:
+        payload = json.load(response)
+
+    choice = (payload.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = message.get("content") or message.get("reasoning") or message.get("reasoning_content") or ""
+    return content
+
+
+def extract_json(text):
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        raise RuntimeError("LLM não retornou JSON: " + text[:160])
+    return json.loads(text[start:end + 1])
+
+
+def safe_path(base, relative):
+    candidate = os.path.normpath(os.path.join(base, relative))
+    if not candidate.startswith(os.path.normpath(base) + os.sep):
+        raise RuntimeError("caminho inválido: " + relative)
+    return candidate
+
+
 def run_agent(prompt, cwd, env=None, model=None):
     if AGENT_CMD:
         cmd = AGENT_CMD.split() + [prompt]
@@ -81,9 +139,7 @@ def run_agent(prompt, cwd, env=None, model=None):
     log(f"agent cmd: {' '.join(cmd[:6])} ...")
 
     try:
-        result = subprocess.run(
-            cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT, env=env
-        )
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT, env=env)
     except subprocess.TimeoutExpired as error:
         partial = (error.stdout or b"")[-1500:]
         if isinstance(partial, bytes):
@@ -94,22 +150,6 @@ def run_agent(prompt, cwd, env=None, model=None):
     output = (result.stdout or "")[-4000:] + (result.stderr or "")[-2000:]
     log(f"agent output tail: {output[-600:].replace(chr(10), ' ')}")
     return result.returncode, output
-
-
-def agent_env_and_model(payload):
-    """Build the subprocess env/model from the LLM config sent by the site."""
-    llm = payload.get("llm") or {}
-    env = dict(os.environ)
-    api_key = llm.get("api_key")
-    if isinstance(api_key, str) and api_key:
-        env["OPENROUTER_API_KEY"] = api_key
-
-    model = llm.get("model")
-    oc_model = None
-    if isinstance(model, str) and model:
-        oc_model = model if model.startswith("openrouter/") else f"openrouter/{model}"
-
-    return env, oc_model
 
 
 def create_pr(slug, branch, base, title, body):
@@ -133,7 +173,7 @@ def create_pr(slug, branch, base, title, body):
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response).get("html_url")
     except urllib.error.HTTPError as error:
-        if error.code == 422:  # PR already exists for this head/base
+        if error.code == 422:
             return None
         raise RuntimeError(f"PR HTTP {error.code}")
 
@@ -141,6 +181,7 @@ def create_pr(slug, branch, base, title, body):
 def implement(payload):
     card = payload.get("card", {})
     repo = payload.get("repository", {})
+    llm = payload.get("llm") or {}
     slug = repo.get("slug") or ""
     if not slug:
         return {"ok": False, "error": "repository.slug ausente"}
@@ -151,25 +192,47 @@ def implement(payload):
 
     prefix = BRANCH_PREFIX.get(card.get("type"), "feature")
     branch = f"{prefix}/card-{card.get('id')}"
-
     run(["git", "checkout", "-B", branch], cwd=path)
 
-    prompt = (
-        f"Você está no repositório '{slug}'. Implemente a tarefa abaixo de forma completa e mínima, "
-        "seguindo as convenções do projeto. Rode lint e testes relevantes e corrija o que quebrar. "
-        "NÃO faça commit nem push; apenas edite os arquivos e deixe o repositório pronto.\n\n"
-        f"Tarefa #{card.get('id')} ({card.get('type')}): {card.get('title')}\n\n"
+    task = (
+        f"Tarefa #{card.get('id')} ({card.get('type')}): {card.get('title')}\n"
         f"Descrição:\n{card.get('description') or '(sem descrição)'}\n"
     )
 
-    env, oc_model = agent_env_and_model(payload)
-    code, output = run_agent(prompt, path, env=env, model=oc_model)
-    log(f"agent finished card={card.get('id')} exit={code}")
+    messages = [
+        {"role": "system", "content": (
+            "Você é um engenheiro de software sênior. Implemente a tarefa de forma completa e mínima, "
+            "seguindo as convenções do projeto. Responda SOMENTE com JSON puro no formato: "
+            '{"summary": "resumo curto", "files": [{"path": "caminho/relativo", "content": "conteúdo completo do arquivo"}]}. '
+            "Inclua o conteúdo COMPLETO de cada arquivo criado ou alterado. Não use cercas de código."
+        )},
+        {"role": "user", "content": task + "\n\n" + repo_context(path)},
+    ]
+
+    try:
+        content = llm_chat(llm, messages)
+        data = extract_json(content)
+    except Exception as error:  # noqa: BLE001
+        log(f"llm failed card={card.get('id')}: {error}")
+        return {"ok": False, "error": f"LLM falhou: {error}"}
+
+    files = data.get("files") or []
+    if not files:
+        return {"ok": False, "error": "LLM não propôs arquivos.", "summary": str(data.get("summary", ""))[:800]}
+
+    for entry in files:
+        rel = entry.get("path")
+        body = entry.get("content")
+        if not rel or body is None:
+            continue
+        target = safe_path(path, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(body)
 
     status = run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
     if not status:
-        log(f"no changes card={card.get('id')}")
-        return {"ok": False, "error": "Agente não produziu alterações.", "summary": output[-1200:]}
+        return {"ok": False, "error": "Nenhuma alteração aplicada."}
 
     run(["git", "config", "user.email", "orchestrator@agenteresolve.local"], cwd=path)
     run(["git", "config", "user.name", "Agenteresolve Orchestrator"], cwd=path)
@@ -183,45 +246,64 @@ def implement(payload):
 
     push = run(["git", "push", "-u", "origin", branch, "--force"], cwd=path)
     if push.returncode != 0:
-        log(f"push failed card={card.get('id')}: {push.stderr[-200:]}")
         return {"ok": False, "error": "push falhou: " + push.stderr[-400:], "branch": branch}
 
+    summary = str(data.get("summary") or "")[:1500]
     pr_url = create_pr(
         slug,
         branch,
         default_branch,
         f"{card.get('title', 'task')} (card #{card.get('id')})",
-        output[-1500:] or "Implementado pelo orquestrador Agenteresolve.",
+        summary or "Implementado pelo orquestrador Agenteresolve.",
     )
     log(f"done card={card.get('id')} branch={branch} pr={pr_url}")
 
-    return {"ok": True, "branch": branch, "pr_url": pr_url, "summary": output[-1500:]}
+    return {"ok": True, "branch": branch, "pr_url": pr_url, "summary": summary}
 
 
 def review(payload):
     card = payload.get("card", {})
     repo = payload.get("repository", {})
+    llm = payload.get("llm") or {}
     slug = repo.get("slug") or ""
     path = repo_dir(slug) if slug else WORKSPACE
 
     if not os.path.isdir(path):
         path = WORKSPACE
 
-    prompt = (
-        f"Revise as mudanças do card #{card.get('id')} ({card.get('title')}) no repositório '{slug}'. "
-        "Aponte riscos, bugs, testes faltando e bloqueios de merge. Seja objetivo e curto."
-    )
+    default_branch = repo.get("default_branch") or "main"
+    diff = run(["git", "diff", f"origin/{default_branch}...HEAD"], cwd=path).stdout[:6000]
 
-    env, oc_model = agent_env_and_model(payload)
-    _, output = run_agent(prompt, path, env=env, model=oc_model)
+    messages = [
+        {"role": "system", "content": "Você é um revisor de código. Aponte riscos, bugs, testes faltando e bloqueios de merge. Seja objetivo e curto."},
+        {"role": "user", "content": f"Card #{card.get('id')}: {card.get('title')}\n\nDiff:\n{diff or '(sem diff)'}"},
+    ]
 
-    return {"ok": True, "summary": output[-2000:]}
+    try:
+        content = llm_chat(llm, messages, max_tokens=1200)
+    except Exception as error:  # noqa: BLE001
+        return {"ok": False, "summary": f"Revisão falhou: {error}"}
+
+    return {"ok": True, "summary": content[-2000:]}
+
+
+def agent_env_and_model(payload):
+    llm = payload.get("llm") or {}
+    env = dict(os.environ)
+    api_key = llm.get("api_key")
+    if isinstance(api_key, str) and api_key:
+        env["OPENROUTER_API_KEY"] = api_key
+    model = llm.get("model")
+    oc_model = None
+    if isinstance(model, str) and model:
+        oc_model = model if model.startswith("openrouter/") else f"openrouter/{model}"
+    return env, oc_model
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "agenteresolve-runner"
 
-    def log_message(self, *args):  # keep logs quiet (no secrets)
+    def log_message(self, *args):
         return
 
     def _send(self, status, body):
@@ -245,20 +327,8 @@ class Handler(BaseHTTPRequestHandler):
                 "model": OPENCODE_MODEL or "(opencode.json)",
                 "has_openrouter_key": bool(os.environ.get("OPENROUTER_API_KEY")),
                 "has_github_token": bool(GITHUB_TOKEN),
-                "agent_cmd_override": bool(AGENT_CMD),
                 "workspace": WORKSPACE,
             })
-        if self.path.endswith("/agentcheck"):
-            if RUNNER_TOKEN and self.headers.get("X-Runner-Token") != RUNNER_TOKEN:
-                return self._send(401, {"ok": False, "error": "unauthorized"})
-            env = dict(os.environ)
-            key = self.headers.get("X-OpenRouter-Key")
-            if key:
-                env["OPENROUTER_API_KEY"] = key
-            model = self.headers.get("X-Model")
-            oc_model = model if model and model.startswith("openrouter/") else (f"openrouter/{model}" if model else None)
-            code, output = run_agent("Responda apenas: ok", WORKSPACE, env=env, model=oc_model)
-            return self._send(200, {"ok": code == 0, "exit": code, "output": output[-1500:]})
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -279,6 +349,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.endswith("/review"):
                 return self._send(200, review(payload))
         except Exception as error:  # noqa: BLE001
+            log(f"error: {error}")
             return self._send(500, {"ok": False, "error": str(error)})
 
         return self._send(404, {"ok": False, "error": "not found"})
