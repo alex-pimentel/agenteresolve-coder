@@ -171,3 +171,26 @@ class GateTest(unittest.TestCase):
             runner = load_runner({"RUNNER_TOKEN": "t", "RUNNER_GATE_CMD": "bash -c 'exit 0'"})
             ok, output = runner.run_gate(tmp)
             self.assertTrue(ok)
+
+    def test_resolve_prefers_repo_local_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = os.path.join(tmp, "vendor", "bin", "pint")
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            with open(local, "w") as handle:
+                handle.write("#!/usr/bin/env bash\nexit 0\n")
+            os.chmod(local, 0o755)
+            runner = load_runner({"RUNNER_TOKEN": "t"})
+            resolved = runner.resolve_gate_command(tmp, ["vendor/bin/pint", "--test"])
+            self.assertEqual(resolved[0], local)
+
+    def test_resolve_returns_none_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = load_runner({"RUNNER_TOKEN": "t"})
+            self.assertIsNone(runner.resolve_gate_command(tmp, ["definitely-not-a-real-binary-xyz"]))
+
+    def test_gate_skipped_when_no_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = load_runner({"RUNNER_TOKEN": "t"})
+            ok, output = runner.run_gate(tmp)
+            self.assertTrue(ok)
+            self.assertIn("skipped", output.lower())

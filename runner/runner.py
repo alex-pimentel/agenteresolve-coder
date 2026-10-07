@@ -84,20 +84,35 @@ def detect_gate_commands(path):
     return commands
 
 
+def resolve_gate_command(path, command):
+    candidate = os.path.join(path, command[0])
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return [candidate] + command[1:]
+    if shutil.which(command[0]):
+        return command
+    return None
+
+
 def run_gate(path):
     override = os.environ.get("RUNNER_GATE_CMD")
-    commands = [shlex.split(override)] if override else detect_gate_commands(path)
+    if override is not None:
+        commands = [shlex.split(override)]
+    else:
+        commands = [resolve_gate_command(path, c) for c in detect_gate_commands(path)]
+        commands = [c for c in commands if c is not None]
     if not commands:
         return True, "gate: nenhum comando detectado (skipped)."
 
     failures = []
     for command in commands:
-        if override is None and shutil.which(command[0]) is None:
-            log(f"gate skip (missing): {command[0]}")
-            continue
-        result = run(command, cwd=path, timeout=1800)
+        try:
+            result = run(command, cwd=path, timeout=1800)
+        except subprocess.TimeoutExpired:
+            return False, f"gate timeout: {' '.join(command)}"
         if result.returncode != 0:
-            failures.append(f"gate falhou: {' '.join(command)}\n{(result.stdout or '')[-1500:]}{(result.stderr or '')[-1500:]}")
+            stdout = (result.stdout or "")[-1500:]
+            stderr = (result.stderr or "")[-1500:]
+            failures.append(f"gate falhou: {' '.join(command)}\n{stdout}\n{stderr}")
 
     if failures:
         return False, "\n\n".join(failures)
