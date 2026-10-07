@@ -113,3 +113,39 @@ class AgentEnvAndModelTest(unittest.TestCase):
             {"api_key": "k", "model": "some/model"})
         self.assertEqual(model, "some/model")
         self.assertEqual(env["OPENROUTER_API_KEY"], "k")
+
+
+class ReviewViaAgentTest(unittest.TestCase):
+    def _runner(self, tmp, agent_body):
+        stub = os.path.join(tmp, "review_stub.sh")
+        with open(stub, "w") as handle:
+            handle.write("#!/usr/bin/env bash\n" + agent_body + "\n")
+        os.chmod(stub, 0o755)
+        return load_runner({
+            "RUNNER_TOKEN": "t",
+            "RUNNER_AGENT_MODE": "opencode",
+            "RUNNER_AGENT_CMD": stub,
+            "WORKSPACE_DIR": tmp,
+        })
+
+    def test_review_block_returns_not_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self._runner(tmp, "echo 'BLOCK: missing tests'")
+            result = runner.review({
+                "card": {"id": 1, "title": "x"},
+                "repository": {"slug": "demo", "default_branch": "main"},
+                "llm": {},
+            })
+            self.assertFalse(result["ok"])
+            self.assertIn("BLOCK:", result["summary"])
+
+    def test_review_ok_returns_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self._runner(tmp, "echo 'OK: looks good'")
+            result = runner.review({
+                "card": {"id": 1, "title": "x"},
+                "repository": {"slug": "demo", "default_branch": "main"},
+                "llm": {},
+            })
+            self.assertTrue(result["ok"])
+            self.assertIn("OK:", result["summary"])

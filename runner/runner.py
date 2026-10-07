@@ -335,6 +335,7 @@ def review(payload):
     card = payload.get("card", {})
     repo = payload.get("repository", {})
     llm = payload.get("llm") or {}
+    cfg = config()
     slug = repo.get("slug") or ""
     path = repo_dir(repo_name_from(repo.get("github_url"), slug)) if slug else WORKSPACE
 
@@ -342,7 +343,22 @@ def review(payload):
         path = WORKSPACE
 
     default_branch = repo.get("default_branch") or "main"
-    diff = run(["git", "diff", f"origin/{default_branch}...HEAD"], cwd=path).stdout[:6000]
+    diff = run(["git", "diff", f"origin/{default_branch}...HEAD"], cwd=path).stdout[:12000]
+
+    if cfg["agent_mode"] == "opencode":
+        env, model = agent_env_and_model(llm)
+        prompt = (
+            "Você é um revisor de código independente. Revise o diff do card a seguir. "
+            "Aponte riscos, bugs, testes faltando e bloqueios de merge. "
+            "Se houver qualquer bloqueio, comece a resposta com 'BLOCK:' seguido do motivo. "
+            "Caso contrário, comece com 'OK:' e um resumo curto.\n\n"
+            f"Card #{card.get('id')}: {card.get('title')}\n\nDiff:\n{diff or '(sem diff)'}"
+        )
+        code, output = run_agent(prompt, cwd=path, env=env, model=model)
+        if code != 0:
+            return {"ok": False, "summary": f"Revisão falhou (agente code={code})."}
+        summary = output[-2000:]
+        return {"ok": "BLOCK:" not in summary, "summary": summary}
 
     messages = [
         {"role": "system", "content": "Você é um revisor de código. Aponte riscos, bugs, testes faltando e bloqueios de merge. Seja objetivo e curto."},
