@@ -55,6 +55,17 @@ def repo_dir(slug):
     return os.path.join(WORKSPACE, slug)
 
 
+def repo_name_from(github_url, slug):
+    """Real GitHub repo name (from the URL), falling back to the board slug."""
+    if github_url:
+        base = github_url.rstrip("/").split("/")[-1]
+        if base.endswith(".git"):
+            base = base[:-4]
+        if base:
+            return base
+    return slug
+
+
 def ensure_repo(slug, github_url, default_branch):
     path = repo_dir(slug)
     if not os.path.isdir(os.path.join(path, ".git")):
@@ -187,8 +198,9 @@ def implement(payload):
         return {"ok": False, "error": "repository.slug ausente"}
 
     default_branch = repo.get("default_branch") or "main"
-    log(f"implement start card={card.get('id')} slug={slug}")
-    path = ensure_repo(slug, repo.get("github_url"), default_branch)
+    name = repo_name_from(repo.get("github_url"), slug)
+    log(f"implement start card={card.get('id')} repo={name}")
+    path = ensure_repo(name, repo.get("github_url"), default_branch)
 
     prefix = BRANCH_PREFIX.get(card.get("type"), "feature")
     branch = f"{prefix}/card-{card.get('id')}"
@@ -250,7 +262,7 @@ def implement(payload):
 
     summary = str(data.get("summary") or "")[:1500]
     pr_url = create_pr(
-        slug,
+        name,
         branch,
         default_branch,
         f"{card.get('title', 'task')} (card #{card.get('id')})",
@@ -266,7 +278,7 @@ def review(payload):
     repo = payload.get("repository", {})
     llm = payload.get("llm") or {}
     slug = repo.get("slug") or ""
-    path = repo_dir(slug) if slug else WORKSPACE
+    path = repo_dir(repo_name_from(repo.get("github_url"), slug)) if slug else WORKSPACE
 
     if not os.path.isdir(path):
         path = WORKSPACE
