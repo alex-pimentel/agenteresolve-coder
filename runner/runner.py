@@ -453,11 +453,14 @@ def agent_env_and_model(llm):
             oc_model = model
         else:
             oc_model = f"openrouter/{model}"
-    if isinstance(api_key, str) and api_key:
-        if oc_model and oc_model.startswith("opencode/"):
+    if oc_model and oc_model.startswith("opencode/"):
+        # The container's OPENCODE_API_KEY (set in the coder app env) is
+        # authoritative for the opencode provider; the per-request key is only
+        # a fallback when the container has none.
+        if "OPENCODE_API_KEY" not in env and isinstance(api_key, str) and api_key:
             env["OPENCODE_API_KEY"] = api_key
-        else:
-            env["OPENROUTER_API_KEY"] = api_key
+    elif isinstance(api_key, str) and api_key:
+        env["OPENROUTER_API_KEY"] = api_key
     return env, oc_model
 
 

@@ -10,7 +10,7 @@ RUNNER_PATH = pathlib.Path(__file__).resolve().parents[1] / "runner.py"
 
 def load_runner(env=None):
     for key in list(os.environ):
-        if key.startswith("RUNNER_") or key in ("WORKSPACE_DIR", "OPENCODE_MODEL", "OPENROUTER_API_KEY"):
+        if key.startswith("RUNNER_") or key in ("WORKSPACE_DIR", "OPENCODE_MODEL", "OPENROUTER_API_KEY", "OPENCODE_API_KEY"):
             os.environ.pop(key, None)
     if env:
         os.environ.update(env)
@@ -128,18 +128,24 @@ class AgentEnvAndModelTest(unittest.TestCase):
         self.assertNotIn("RUNNER_TOKEN", env)
         self.assertEqual(env["OPENCODE_API_KEY"], "provider-key")
 
-    def test_provider_key_from_runner_env_is_inherited_and_overridable(self):
+    def test_container_opencode_key_is_authoritative_over_request_key(self):
         runner = load_runner({"RUNNER_TOKEN": "t"})
         os.environ["OPENCODE_API_KEY"] = "env-key"
         try:
-            env, _ = runner.agent_env_and_model({"model": "opencode/deepseek-v4.1-flash"})
-            self.assertEqual(env["OPENCODE_API_KEY"], "env-key")
+            inherited, _ = runner.agent_env_and_model({"model": "opencode/deepseek-v4.1-flash"})
+            self.assertEqual(inherited["OPENCODE_API_KEY"], "env-key")
 
-            overridden, _ = runner.agent_env_and_model(
+            kept, _ = runner.agent_env_and_model(
                 {"api_key": "request-key", "model": "opencode/deepseek-v4.1-flash"})
-            self.assertEqual(overridden["OPENCODE_API_KEY"], "request-key")
+            self.assertEqual(kept["OPENCODE_API_KEY"], "env-key")
         finally:
             os.environ.pop("OPENCODE_API_KEY", None)
+
+    def test_request_key_used_when_container_has_none(self):
+        runner = load_runner({"RUNNER_TOKEN": "t"})
+        env, _ = runner.agent_env_and_model(
+            {"api_key": "request-key", "model": "opencode/deepseek-v4.1-flash"})
+        self.assertEqual(env["OPENCODE_API_KEY"], "request-key")
 
 
 class ReviewViaAgentTest(unittest.TestCase):
