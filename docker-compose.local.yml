@@ -2,7 +2,9 @@ name: agenteresolve-runner-local
 
 services:
   runner:
-    image: python:3.12-slim
+    build:
+      context: ./runner
+      dockerfile: Dockerfile.local
     working_dir: /workspace
     command: ["python3", "/opt/runner/runner.py"]
     environment:
@@ -17,6 +19,7 @@ services:
       GITHUB_TOKEN: ""
     volumes:
       - ./runner:/opt/runner:ro
+      - ./runner/tests/remotes:/remotes
       - runner_workspace:/workspace
     ports:
       - "8090:8090"
