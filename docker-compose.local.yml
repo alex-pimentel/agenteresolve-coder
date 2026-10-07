@@ -1,0 +1,25 @@
+name: agenteresolve-runner-local
+
+services:
+  runner:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["python3", "/opt/runner/runner.py"]
+    environment:
+      RUNNER_TOKEN: local-token
+      RUNNER_HOST: "0.0.0.0"
+      RUNNER_PORT: "8090"
+      RUNNER_AGENT_MODE: opencode
+      RUNNER_AGENT_CMD: "/opt/runner/tests/stub_agent.sh"
+      RUNNER_SKIP_PUSH: "1"
+      RUNNER_GATE: "0"
+      WORKSPACE_DIR: /workspace
+      GITHUB_TOKEN: ""
+    volumes:
+      - ./runner:/opt/runner:ro
+      - runner_workspace:/workspace
+    ports:
+      - "8090:8090"
+
+volumes:
+  runner_workspace:

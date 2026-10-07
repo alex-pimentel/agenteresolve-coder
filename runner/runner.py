@@ -372,8 +372,10 @@ def main():
         print("runner: RUNNER_TOKEN não definido; recusando subir.", file=sys.stderr)
         sys.exit(1)
 
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"runner: listening on 127.0.0.1:{PORT}", file=sys.stderr)
+    host = os.environ.get("RUNNER_HOST", "127.0.0.1")
+    port = int(os.environ.get("RUNNER_PORT", str(PORT)))
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"runner: listening on {host}:{port}", file=sys.stderr)
     server.serve_forever()
 
 
