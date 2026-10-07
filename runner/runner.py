@@ -18,6 +18,10 @@ Only the Python standard library is used.
 """
 import json
 import os
+import re
+import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import urllib.error
@@ -34,6 +38,25 @@ AGENT_CMD = os.environ.get("RUNNER_AGENT_CMD", "")
 PORT = int(os.environ.get("RUNNER_PORT", "8090"))
 AGENT_TIMEOUT = int(os.environ.get("RUNNER_AGENT_TIMEOUT", "900"))
 
+
+def config():
+    return {
+        "home": os.environ.get("HOME", "/home/opencode"),
+        "workspace": os.environ.get("WORKSPACE_DIR", os.path.join(os.environ.get("HOME", "/home/opencode"), "agenteresolve")),
+        "runner_token": os.environ.get("RUNNER_TOKEN", ""),
+        "github_token": os.environ.get("GITHUB_TOKEN", ""),
+        "github_org": os.environ.get("GITHUB_ORG", "alex-pimentel"),
+        "opencode_model": os.environ.get("OPENCODE_MODEL", ""),
+        "agent_cmd": os.environ.get("RUNNER_AGENT_CMD", ""),
+        "agent_mode": os.environ.get("RUNNER_AGENT_MODE", "llm"),
+        "skip_push": os.environ.get("RUNNER_SKIP_PUSH", "0") == "1",
+        "gate": os.environ.get("RUNNER_GATE", "0") == "1",
+        "max_iterations": int(os.environ.get("RUNNER_MAX_ITERATIONS", "2")),
+        "port": int(os.environ.get("RUNNER_PORT", "8090")),
+        "agent_timeout": int(os.environ.get("RUNNER_AGENT_TIMEOUT", "900")),
+    }
+
+
 BRANCH_PREFIX = {
     "feature": "feature",
     "fix": "fix",
@@ -49,6 +72,53 @@ def log(message):
 
 def run(cmd, cwd=None, timeout=600):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+
+
+def detect_gate_commands(path):
+    commands = []
+    if os.path.isfile(os.path.join(path, "composer.json")):
+        commands += [["vendor/bin/pint", "--test"], ["vendor/bin/phpstan", "analyse", "--no-progress"], ["php", "artisan", "test", "--compact"]]
+    if os.path.isfile(os.path.join(path, "package.json")):
+        commands += [["npm", "run", "lint"], ["npm", "run", "types"], ["npm", "test", "--", "--run"]]
+    if os.path.isfile(os.path.join(path, "pyproject.toml")) or os.path.isfile(os.path.join(path, "requirements.txt")):
+        commands += [["ruff", "check", "."], ["pytest", "-q"]]
+    return commands
+
+
+def resolve_gate_command(path, command):
+    candidate = os.path.join(path, command[0])
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return [candidate] + command[1:]
+    if shutil.which(command[0]):
+        return command
+    return None
+
+
+def run_gate(path):
+    override = os.environ.get("RUNNER_GATE_CMD")
+    use_override = bool(override and override.strip())
+    if use_override:
+        commands = [shlex.split(override)]
+    else:
+        commands = [resolve_gate_command(path, c) for c in detect_gate_commands(path)]
+        commands = [c for c in commands if c is not None]
+    if not commands:
+        return True, "gate: nenhum comando detectado (skipped)."
+
+    failures = []
+    for command in commands:
+        try:
+            result = run(command, cwd=path, timeout=1800)
+        except subprocess.TimeoutExpired:
+            return False, f"gate timeout: {' '.join(command)}"
+        if result.returncode != 0:
+            stdout = (result.stdout or "")[-1500:]
+            stderr = (result.stderr or "")[-1500:]
+            failures.append(f"gate falhou: {' '.join(command)}\n{stdout}\n{stderr}")
+
+    if failures:
+        return False, "\n\n".join(failures)
+    return True, "gate: todos os comandos passaram."
 
 
 def repo_dir(slug):
@@ -138,29 +208,32 @@ def safe_path(base, relative):
 
 
 def run_agent(prompt, cwd, env=None, model=None):
-    if AGENT_CMD:
-        cmd = AGENT_CMD.split() + [prompt]
+    cfg = config()
+    if cfg["agent_cmd"]:
+        cmd = shlex.split(cfg["agent_cmd"]) + [prompt]
     else:
         cmd = ["opencode", "run", "--auto"]
-        chosen = model or OPENCODE_MODEL
+        chosen = model or cfg["opencode_model"]
         if chosen:
             cmd += ["--model", chosen]
         cmd += [prompt]
 
     log(f"agent cmd: {' '.join(cmd[:6])} ...")
 
+    process = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=env, start_new_session=True,
+    )
     try:
-        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=AGENT_TIMEOUT, env=env)
-    except subprocess.TimeoutExpired as error:
-        partial = (error.stdout or b"")[-1500:]
-        if isinstance(partial, bytes):
-            partial = partial.decode("utf-8", "replace")
-        log(f"agent timeout after {AGENT_TIMEOUT}s")
+        stdout, stderr = process.communicate(timeout=cfg["agent_timeout"])
+        output = (stdout or "")[-4000:] + (stderr or "")[-2000:]
+        return process.returncode, output
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        partial = ((stdout or "") + (stderr or ""))[-1500:]
+        log(f"agent timeout after {cfg['agent_timeout']}s")
         return 124, "TIMEOUT: " + partial
-
-    output = (result.stdout or "")[-4000:] + (result.stderr or "")[-2000:]
-    log(f"agent output tail: {output[-600:].replace(chr(10), ' ')}")
-    return result.returncode, output
 
 
 def create_pr(slug, branch, base, title, body):
@@ -193,6 +266,7 @@ def implement(payload):
     card = payload.get("card", {})
     repo = payload.get("repository", {})
     llm = payload.get("llm") or {}
+    cfg = config()
     slug = repo.get("slug") or ""
     if not slug:
         return {"ok": False, "error": "repository.slug ausente"}
@@ -206,6 +280,82 @@ def implement(payload):
     branch = f"{prefix}/card-{card.get('id')}"
     run(["git", "checkout", "-B", branch], cwd=path)
 
+    if cfg["agent_mode"] == "opencode":
+        summary = run_agent_implement(card, path, llm)
+        if summary is None:
+            return {"ok": False, "error": "Agente opencode falhou (ver logs do runner)."}
+    else:
+        summary = run_llm_implement(card, path, llm)
+        if isinstance(summary, dict):
+            return summary
+
+    status = run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
+    if not status:
+        return {"ok": False, "error": "Nenhuma alteração aplicada."}
+
+    run(["git", "config", "user.email", "orchestrator@agenteresolve.local"], cwd=path)
+    run(["git", "config", "user.name", "Agenteresolve Orchestrator"], cwd=path)
+    run(["git", "add", "-A"], cwd=path)
+    commit = run(
+        ["git", "commit", "-m", f"{card.get('type', 'chore')}(card-{card.get('id')}): {card.get('title', 'task')}"],
+        cwd=path,
+    )
+    if commit.returncode != 0:
+        return {"ok": False, "error": "commit falhou: " + commit.stderr[-400:]}
+
+    pr_url = None
+    if not cfg["skip_push"]:
+        push = run(["git", "push", "-u", "origin", branch, "--force"], cwd=path)
+        if push.returncode != 0:
+            return {"ok": False, "error": "push falhou: " + push.stderr[-400:], "branch": branch}
+        pr_url = create_pr(
+            name, branch, default_branch,
+            f"{card.get('title', 'task')} (card #{card.get('id')})",
+            summary or "Implementado pelo orquestrador Agenteresolve.",
+        )
+
+    log(f"done card={card.get('id')} branch={branch} pr={pr_url}")
+    return {"ok": True, "branch": branch, "pr_url": pr_url, "summary": summary}
+
+
+def agent_task_prompt(card, path):
+    task = (
+        f"Tarefa #{card.get('id')} ({card.get('type')}): {card.get('title')}\n"
+        f"Descrição:\n{card.get('description') or '(sem descrição)'}\n"
+    )
+    return (
+        "Você é um engenheiro de software sênior. Siga um processo spec-driven (GitHub Spec Kit) "
+        "e TDD. Para tarefas não-triviais, use o fluxo specify → plan → tasks → implement → converge; "
+        "para qualquer mudança, siga as skills test-driven-development (escreva primeiro o teste que "
+        "falha) e verification-before-completion (só declare pronto com evidência). "
+        "Implemente a tarefa no repositório atual, de forma mínima e completa, seguindo as convenções "
+        "do projeto. Edite os arquivos diretamente. Rode os testes/lint relevantes antes de terminar. "
+        "Não faça commit nem push; o orquestrador cuidará disso. Ao final, responda com um resumo curto.\n\n"
+        + task + "\n\n" + repo_context(path)
+    )
+
+
+def run_agent_implement(card, path, llm):
+    cfg = config()
+    env, model = agent_env_and_model(llm)
+    prompt = agent_task_prompt(card, path)
+    for attempt in range(1, cfg["max_iterations"] + 1):
+        code, output = run_agent(prompt, cwd=path, env=env, model=model)
+        if code != 0:
+            log(f"opencode agent failed card={card.get('id')} attempt={attempt} code={code}")
+            return None
+        if not cfg["gate"]:
+            return output[-1500:]
+        ok, gate_output = run_gate(path)
+        if ok:
+            return (output[-1000:] + "\n" + gate_output)[-1500:]
+        log(f"gate failed card={card.get('id')} attempt={attempt}")
+        prompt = agent_task_prompt(card, path) + "\n\nO gate de qualidade falhou. Corrija:\n" + gate_output[-3000:]
+    log(f"gate exhausted card={card.get('id')} after {cfg['max_iterations']} attempts")
+    return None
+
+
+def run_llm_implement(card, path, llm):
     task = (
         f"Tarefa #{card.get('id')} ({card.get('type')}): {card.get('title')}\n"
         f"Descrição:\n{card.get('description') or '(sem descrição)'}\n"
@@ -242,41 +392,14 @@ def implement(payload):
         with open(target, "w", encoding="utf-8") as handle:
             handle.write(body)
 
-    status = run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
-    if not status:
-        return {"ok": False, "error": "Nenhuma alteração aplicada."}
-
-    run(["git", "config", "user.email", "orchestrator@agenteresolve.local"], cwd=path)
-    run(["git", "config", "user.name", "Agenteresolve Orchestrator"], cwd=path)
-    run(["git", "add", "-A"], cwd=path)
-    commit = run(
-        ["git", "commit", "-m", f"{card.get('type', 'chore')}(card-{card.get('id')}): {card.get('title', 'task')}"],
-        cwd=path,
-    )
-    if commit.returncode != 0:
-        return {"ok": False, "error": "commit falhou: " + commit.stderr[-400:]}
-
-    push = run(["git", "push", "-u", "origin", branch, "--force"], cwd=path)
-    if push.returncode != 0:
-        return {"ok": False, "error": "push falhou: " + push.stderr[-400:], "branch": branch}
-
-    summary = str(data.get("summary") or "")[:1500]
-    pr_url = create_pr(
-        name,
-        branch,
-        default_branch,
-        f"{card.get('title', 'task')} (card #{card.get('id')})",
-        summary or "Implementado pelo orquestrador Agenteresolve.",
-    )
-    log(f"done card={card.get('id')} branch={branch} pr={pr_url}")
-
-    return {"ok": True, "branch": branch, "pr_url": pr_url, "summary": summary}
+    return str(data.get("summary") or "")[:1500]
 
 
 def review(payload):
     card = payload.get("card", {})
     repo = payload.get("repository", {})
     llm = payload.get("llm") or {}
+    cfg = config()
     slug = repo.get("slug") or ""
     path = repo_dir(repo_name_from(repo.get("github_url"), slug)) if slug else WORKSPACE
 
@@ -284,7 +407,23 @@ def review(payload):
         path = WORKSPACE
 
     default_branch = repo.get("default_branch") or "main"
-    diff = run(["git", "diff", f"origin/{default_branch}...HEAD"], cwd=path).stdout[:6000]
+    diff = run(["git", "diff", f"origin/{default_branch}...HEAD"], cwd=path).stdout[:12000]
+
+    if cfg["agent_mode"] == "opencode":
+        env, model = agent_env_and_model(llm)
+        prompt = (
+            "Você é um revisor de código independente. Revise o diff do card a seguir. "
+            "Aponte riscos, bugs, testes faltando e bloqueios de merge. "
+            "Se houver qualquer bloqueio, comece a resposta com 'BLOCK:' seguido do motivo. "
+            "Caso contrário, comece com 'OK:' e um resumo curto.\n\n"
+            f"Card #{card.get('id')}: {card.get('title')}\n\nDiff:\n{diff or '(sem diff)'}"
+        )
+        code, output = run_agent(prompt, cwd=path, env=env, model=model)
+        if code != 0:
+            return {"ok": False, "summary": f"Revisão falhou (agente code={code})."}
+        summary = output[-2000:]
+        blocked = bool(re.search(r"(?m)^\s*BLOCK:", summary))
+        return {"ok": not blocked, "summary": summary}
 
     messages = [
         {"role": "system", "content": "Você é um revisor de código. Aponte riscos, bugs, testes faltando e bloqueios de merge. Seja objetivo e curto."},
@@ -299,16 +438,29 @@ def review(payload):
     return {"ok": True, "summary": content[-2000:]}
 
 
-def agent_env_and_model(payload):
-    llm = payload.get("llm") or {}
-    env = dict(os.environ)
+def agent_env_and_model(llm):
+    llm = llm or {}
+    safe = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR",
+            "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+            "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+            "OPENCODE_API_KEY", "OPENROUTER_API_KEY")
+    env = {key: os.environ[key] for key in safe if key in os.environ}
     api_key = llm.get("api_key")
-    if isinstance(api_key, str) and api_key:
-        env["OPENROUTER_API_KEY"] = api_key
     model = llm.get("model")
     oc_model = None
     if isinstance(model, str) and model:
-        oc_model = model if model.startswith("openrouter/") else f"openrouter/{model}"
+        if "/" in model:
+            oc_model = model
+        else:
+            oc_model = f"openrouter/{model}"
+    if oc_model and oc_model.startswith("opencode/"):
+        # The container's OPENCODE_API_KEY (set in the coder app env) is
+        # authoritative for the opencode provider; the per-request key is only
+        # a fallback when the container has none.
+        if "OPENCODE_API_KEY" not in env and isinstance(api_key, str) and api_key:
+            env["OPENCODE_API_KEY"] = api_key
+    elif isinstance(api_key, str) and api_key:
+        env["OPENROUTER_API_KEY"] = api_key
     return env, oc_model
 
 
@@ -372,8 +524,10 @@ def main():
         print("runner: RUNNER_TOKEN não definido; recusando subir.", file=sys.stderr)
         sys.exit(1)
 
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"runner: listening on 127.0.0.1:{PORT}", file=sys.stderr)
+    host = os.environ.get("RUNNER_HOST", "127.0.0.1")
+    port = int(os.environ.get("RUNNER_PORT", str(PORT)))
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"runner: listening on {host}:{port}", file=sys.stderr)
     server.serve_forever()
 
 

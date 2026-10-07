@@ -1,1 +1,2 @@
 # Sem segredos neste repo. Credenciais de deploy ficam no .env.deploy do projeto.
+runner/tests/remotes/
