@@ -322,10 +322,13 @@ def agent_task_prompt(card, path):
         f"Descrição:\n{card.get('description') or '(sem descrição)'}\n"
     )
     return (
-        "Você é um engenheiro de software sênior. Implemente a tarefa no repositório atual, "
-        "de forma mínima e completa, seguindo as convenções do projeto. Edite os arquivos "
-        "diretamente. Rode os testes/lint relevantes antes de terminar. Não faça commit nem push; "
-        "o orquestrador cuidará disso. Ao final, responda com um resumo curto.\n\n"
+        "Você é um engenheiro de software sênior. Siga um processo spec-driven (GitHub Spec Kit) "
+        "e TDD. Para tarefas não-triviais, use o fluxo specify → plan → tasks → implement → converge; "
+        "para qualquer mudança, siga as skills test-driven-development (escreva primeiro o teste que "
+        "falha) e verification-before-completion (só declare pronto com evidência). "
+        "Implemente a tarefa no repositório atual, de forma mínima e completa, seguindo as convenções "
+        "do projeto. Edite os arquivos diretamente. Rode os testes/lint relevantes antes de terminar. "
+        "Não faça commit nem push; o orquestrador cuidará disso. Ao final, responda com um resumo curto.\n\n"
         + task + "\n\n" + repo_context(path)
     )
 

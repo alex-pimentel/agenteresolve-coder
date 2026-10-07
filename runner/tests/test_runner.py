@@ -243,3 +243,15 @@ class IterateOnGateTest(unittest.TestCase):
             # first attempt left .attempt; second attempt produced a.txt -> iteration happened
             self.assertTrue(os.path.isfile(os.path.join(work, "src", ".attempt")))
             self.assertTrue(os.path.isfile(os.path.join(work, "src", "a.txt")))
+
+
+class AgentPromptTest(unittest.TestCase):
+    def test_prompt_mentions_spec_kit_and_tdd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = load_runner({"RUNNER_TOKEN": "t"})
+            prompt = runner.agent_task_prompt(
+                {"id": 1, "type": "feature", "title": "x", "description": "d"}, tmp
+            )
+            self.assertIn("Spec Kit", prompt)
+            self.assertIn("test-driven", prompt)
+            self.assertIn("verification-before-completion", prompt)
