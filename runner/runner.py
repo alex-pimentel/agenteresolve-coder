@@ -18,6 +18,7 @@ Only the Python standard library is used.
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -95,7 +96,8 @@ def resolve_gate_command(path, command):
 
 def run_gate(path):
     override = os.environ.get("RUNNER_GATE_CMD")
-    if override is not None:
+    use_override = bool(override and override.strip())
+    if use_override:
         commands = [shlex.split(override)]
     else:
         commands = [resolve_gate_command(path, c) for c in detect_gate_commands(path)]
@@ -208,7 +210,7 @@ def safe_path(base, relative):
 def run_agent(prompt, cwd, env=None, model=None):
     cfg = config()
     if cfg["agent_cmd"]:
-        cmd = cfg["agent_cmd"].split() + [prompt]
+        cmd = shlex.split(cfg["agent_cmd"]) + [prompt]
     else:
         cmd = ["opencode", "run", "--auto"]
         chosen = model or cfg["opencode_model"]
@@ -337,10 +339,8 @@ def run_agent_implement(card, path, llm):
     cfg = config()
     env, model = agent_env_and_model(llm)
     prompt = agent_task_prompt(card, path)
-    last_output = ""
     for attempt in range(1, cfg["max_iterations"] + 1):
         code, output = run_agent(prompt, cwd=path, env=env, model=model)
-        last_output = output
         if code != 0:
             log(f"opencode agent failed card={card.get('id')} attempt={attempt} code={code}")
             return None
@@ -422,7 +422,8 @@ def review(payload):
         if code != 0:
             return {"ok": False, "summary": f"Revisão falhou (agente code={code})."}
         summary = output[-2000:]
-        return {"ok": "BLOCK:" not in summary, "summary": summary}
+        blocked = bool(re.search(r"(?m)^\s*BLOCK:", summary))
+        return {"ok": not blocked, "summary": summary}
 
     messages = [
         {"role": "system", "content": "Você é um revisor de código. Aponte riscos, bugs, testes faltando e bloqueios de merge. Seja objetivo e curto."},
@@ -439,7 +440,10 @@ def review(payload):
 
 def agent_env_and_model(llm):
     llm = llm or {}
-    env = dict(os.environ)
+    safe = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR",
+            "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+            "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
+    env = {key: os.environ[key] for key in safe if key in os.environ}
     api_key = llm.get("api_key")
     model = llm.get("model")
     oc_model = None

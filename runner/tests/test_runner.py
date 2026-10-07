@@ -114,6 +114,20 @@ class AgentEnvAndModelTest(unittest.TestCase):
         self.assertEqual(model, "some/model")
         self.assertEqual(env["OPENROUTER_API_KEY"], "k")
 
+    def test_runner_secrets_are_not_inherited_but_provider_key_is(self):
+        runner = load_runner({"RUNNER_TOKEN": "runner-secret"})
+        os.environ["GITHUB_TOKEN"] = "gh-secret"
+        os.environ["RUNNER_TOKEN"] = "runner-secret"
+        try:
+            env, model = runner.agent_env_and_model(
+                {"api_key": "provider-key", "model": "opencode/deepseek-v4.1-flash"})
+        finally:
+            os.environ.pop("GITHUB_TOKEN", None)
+            os.environ.pop("RUNNER_TOKEN", None)
+        self.assertNotIn("GITHUB_TOKEN", env)
+        self.assertNotIn("RUNNER_TOKEN", env)
+        self.assertEqual(env["OPENCODE_API_KEY"], "provider-key")
+
 
 class ReviewViaAgentTest(unittest.TestCase):
     def _runner(self, tmp, agent_body):
@@ -191,6 +205,13 @@ class GateTest(unittest.TestCase):
     def test_gate_skipped_when_no_commands(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = load_runner({"RUNNER_TOKEN": "t"})
+            ok, output = runner.run_gate(tmp)
+            self.assertTrue(ok)
+            self.assertIn("skipped", output.lower())
+
+    def test_blank_gate_override_falls_through_to_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = load_runner({"RUNNER_TOKEN": "t", "RUNNER_GATE_CMD": ""})
             ok, output = runner.run_gate(tmp)
             self.assertTrue(ok)
             self.assertIn("skipped", output.lower())
