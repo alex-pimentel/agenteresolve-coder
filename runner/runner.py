@@ -357,8 +357,8 @@ def review(payload):
     return {"ok": True, "summary": content[-2000:]}
 
 
-def agent_env_and_model(payload):
-    llm = payload.get("llm") or {}
+def agent_env_and_model(llm):
+    llm = llm or {}
     env = dict(os.environ)
     api_key = llm.get("api_key")
     model = llm.get("model")

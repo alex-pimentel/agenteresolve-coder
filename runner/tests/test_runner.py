@@ -89,3 +89,27 @@ class ImplementViaAgentTest(unittest.TestCase):
             branch = subprocess.run(["git", "-C", work, "rev-parse", "--abbrev-ref", "HEAD"],
                                     capture_output=True, text=True).stdout.strip()
             self.assertEqual(branch, "feature/card-7")
+
+
+class AgentEnvAndModelTest(unittest.TestCase):
+    def test_opencode_provider_is_preserved_and_key_exported(self):
+        runner = load_runner({"RUNNER_TOKEN": "t"})
+        env, model = runner.agent_env_and_model(
+            {"api_key": "k", "model": "opencode/deepseek-v4.1-flash"})
+        self.assertEqual(model, "opencode/deepseek-v4.1-flash")
+        self.assertEqual(env["OPENCODE_API_KEY"], "k")
+        self.assertNotIn("openrouter/opencode/deepseek-v4.1-flash", model)
+
+    def test_bare_model_gets_openrouter_prefix_and_key(self):
+        runner = load_runner({"RUNNER_TOKEN": "t"})
+        env, model = runner.agent_env_and_model(
+            {"api_key": "k", "model": "deepseek-v4.1-flash"})
+        self.assertEqual(model, "openrouter/deepseek-v4.1-flash")
+        self.assertEqual(env["OPENROUTER_API_KEY"], "k")
+
+    def test_provider_prefixed_non_opencode_model_uses_openrouter_key(self):
+        runner = load_runner({"RUNNER_TOKEN": "t"})
+        env, model = runner.agent_env_and_model(
+            {"api_key": "k", "model": "some/model"})
+        self.assertEqual(model, "some/model")
+        self.assertEqual(env["OPENROUTER_API_KEY"], "k")
