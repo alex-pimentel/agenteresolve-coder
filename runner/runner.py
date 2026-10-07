@@ -216,6 +216,7 @@ def implement(payload):
     card = payload.get("card", {})
     repo = payload.get("repository", {})
     llm = payload.get("llm") or {}
+    cfg = config()
     slug = repo.get("slug") or ""
     if not slug:
         return {"ok": False, "error": "repository.slug ausente"}
@@ -229,6 +230,68 @@ def implement(payload):
     branch = f"{prefix}/card-{card.get('id')}"
     run(["git", "checkout", "-B", branch], cwd=path)
 
+    if cfg["agent_mode"] == "opencode":
+        summary = run_agent_implement(card, path, llm)
+        if summary is None:
+            return {"ok": False, "error": "Agente opencode falhou (ver logs do runner)."}
+    else:
+        summary = run_llm_implement(card, path, llm)
+        if isinstance(summary, dict):
+            return summary
+
+    status = run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
+    if not status:
+        return {"ok": False, "error": "Nenhuma alteração aplicada."}
+
+    run(["git", "config", "user.email", "orchestrator@agenteresolve.local"], cwd=path)
+    run(["git", "config", "user.name", "Agenteresolve Orchestrator"], cwd=path)
+    run(["git", "add", "-A"], cwd=path)
+    commit = run(
+        ["git", "commit", "-m", f"{card.get('type', 'chore')}(card-{card.get('id')}): {card.get('title', 'task')}"],
+        cwd=path,
+    )
+    if commit.returncode != 0:
+        return {"ok": False, "error": "commit falhou: " + commit.stderr[-400:]}
+
+    pr_url = None
+    if not cfg["skip_push"]:
+        push = run(["git", "push", "-u", "origin", branch, "--force"], cwd=path)
+        if push.returncode != 0:
+            return {"ok": False, "error": "push falhou: " + push.stderr[-400:], "branch": branch}
+        pr_url = create_pr(
+            name, branch, default_branch,
+            f"{card.get('title', 'task')} (card #{card.get('id')})",
+            summary or "Implementado pelo orquestrador Agenteresolve.",
+        )
+
+    log(f"done card={card.get('id')} branch={branch} pr={pr_url}")
+    return {"ok": True, "branch": branch, "pr_url": pr_url, "summary": summary}
+
+
+def agent_task_prompt(card, path):
+    task = (
+        f"Tarefa #{card.get('id')} ({card.get('type')}): {card.get('title')}\n"
+        f"Descrição:\n{card.get('description') or '(sem descrição)'}\n"
+    )
+    return (
+        "Você é um engenheiro de software sênior. Implemente a tarefa no repositório atual, "
+        "de forma mínima e completa, seguindo as convenções do projeto. Edite os arquivos "
+        "diretamente. Rode os testes/lint relevantes antes de terminar. Não faça commit nem push; "
+        "o orquestrador cuidará disso. Ao final, responda com um resumo curto.\n\n"
+        + task + "\n\n" + repo_context(path)
+    )
+
+
+def run_agent_implement(card, path, llm):
+    env, model = agent_env_and_model(llm)
+    code, output = run_agent(agent_task_prompt(card, path), cwd=path, env=env, model=model)
+    if code != 0:
+        log(f"opencode agent failed card={card.get('id')} code={code}")
+        return None
+    return output[-1500:]
+
+
+def run_llm_implement(card, path, llm):
     task = (
         f"Tarefa #{card.get('id')} ({card.get('type')}): {card.get('title')}\n"
         f"Descrição:\n{card.get('description') or '(sem descrição)'}\n"
@@ -265,35 +328,7 @@ def implement(payload):
         with open(target, "w", encoding="utf-8") as handle:
             handle.write(body)
 
-    status = run(["git", "status", "--porcelain"], cwd=path).stdout.strip()
-    if not status:
-        return {"ok": False, "error": "Nenhuma alteração aplicada."}
-
-    run(["git", "config", "user.email", "orchestrator@agenteresolve.local"], cwd=path)
-    run(["git", "config", "user.name", "Agenteresolve Orchestrator"], cwd=path)
-    run(["git", "add", "-A"], cwd=path)
-    commit = run(
-        ["git", "commit", "-m", f"{card.get('type', 'chore')}(card-{card.get('id')}): {card.get('title', 'task')}"],
-        cwd=path,
-    )
-    if commit.returncode != 0:
-        return {"ok": False, "error": "commit falhou: " + commit.stderr[-400:]}
-
-    push = run(["git", "push", "-u", "origin", branch, "--force"], cwd=path)
-    if push.returncode != 0:
-        return {"ok": False, "error": "push falhou: " + push.stderr[-400:], "branch": branch}
-
-    summary = str(data.get("summary") or "")[:1500]
-    pr_url = create_pr(
-        name,
-        branch,
-        default_branch,
-        f"{card.get('title', 'task')} (card #{card.get('id')})",
-        summary or "Implementado pelo orquestrador Agenteresolve.",
-    )
-    log(f"done card={card.get('id')} branch={branch} pr={pr_url}")
-
-    return {"ok": True, "branch": branch, "pr_url": pr_url, "summary": summary}
+    return str(data.get("summary") or "")[:1500]
 
 
 def review(payload):
@@ -326,12 +361,18 @@ def agent_env_and_model(payload):
     llm = payload.get("llm") or {}
     env = dict(os.environ)
     api_key = llm.get("api_key")
-    if isinstance(api_key, str) and api_key:
-        env["OPENROUTER_API_KEY"] = api_key
     model = llm.get("model")
     oc_model = None
     if isinstance(model, str) and model:
-        oc_model = model if model.startswith("openrouter/") else f"openrouter/{model}"
+        if "/" in model:
+            oc_model = model
+        else:
+            oc_model = f"openrouter/{model}"
+    if isinstance(api_key, str) and api_key:
+        if oc_model and oc_model.startswith("opencode/"):
+            env["OPENCODE_API_KEY"] = api_key
+        else:
+            env["OPENROUTER_API_KEY"] = api_key
     return env, oc_model
 
 
