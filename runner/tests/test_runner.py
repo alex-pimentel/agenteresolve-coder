@@ -128,6 +128,19 @@ class AgentEnvAndModelTest(unittest.TestCase):
         self.assertNotIn("RUNNER_TOKEN", env)
         self.assertEqual(env["OPENCODE_API_KEY"], "provider-key")
 
+    def test_provider_key_from_runner_env_is_inherited_and_overridable(self):
+        runner = load_runner({"RUNNER_TOKEN": "t"})
+        os.environ["OPENCODE_API_KEY"] = "env-key"
+        try:
+            env, _ = runner.agent_env_and_model({"model": "opencode/deepseek-v4.1-flash"})
+            self.assertEqual(env["OPENCODE_API_KEY"], "env-key")
+
+            overridden, _ = runner.agent_env_and_model(
+                {"api_key": "request-key", "model": "opencode/deepseek-v4.1-flash"})
+            self.assertEqual(overridden["OPENCODE_API_KEY"], "request-key")
+        finally:
+            os.environ.pop("OPENCODE_API_KEY", None)
+
 
 class ReviewViaAgentTest(unittest.TestCase):
     def _runner(self, tmp, agent_body):

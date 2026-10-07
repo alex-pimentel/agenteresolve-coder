@@ -442,7 +442,8 @@ def agent_env_and_model(llm):
     llm = llm or {}
     safe = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR",
             "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-            "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY")
+            "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+            "OPENCODE_API_KEY", "OPENROUTER_API_KEY")
     env = {key: os.environ[key] for key in safe if key in os.environ}
     api_key = llm.get("api_key")
     model = llm.get("model")
