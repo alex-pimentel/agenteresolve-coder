@@ -69,3 +69,33 @@ to a green run with the as-chosen model is external billing on the key's Zen
 workspace; as soon as that workspace can access `opencode/deepseek-v4.1-flash`,
 the E2E passes unchanged. Detail and reproduction commands (secret-safe) are in
 `website/.superpowers/sdd/2026-10-07-opencode-agent-workflow/task-5.2-report.md`.
+
+## Update 2026-10-17 — credential invalid, free models are anonymous-only
+
+Probed again from the same runner image/key (`sk-…`, 67 chars, unchanged since
+2026-10-07 in `.env.deploy`):
+
+- **Every** `opencode/` model — free or paid, including `big-pickle` and
+  `deepseek-v4.1-flash-free` — now fails with
+  `Upstream request failed: Invalid credential` when **any** key is passed
+  (control test with a deliberately bogus key shows the identical error).
+- Without any credential (`env -u OPENCODE_API_KEY`), the **free** models run
+  fine: `opencode/big-pickle`, `opencode/deepseek-v4.1-flash-free`,
+  `opencode/glm-5.3-flash-free` all answered. The paid
+  `opencode/deepseek-v4.1-flash` without a key returns a generic server error
+  (illustrative, not usable).
+
+Conclusion: the API key in `.env.deploy` was invalidated server-side (expired
+or revoked in the opencode Zen workspace), and opencode free models work
+anonymously. Conclusions applied in code:
+
+- Default model moved to `opencode/deepseek-v4.1-flash-free` (free variant of
+  the user-chosen model, no billing involved) in `scripts/local-opencode-e2e.sh`
+  and `docker-compose.local.opencode.yml`.
+- `scripts/local-opencode-e2e.sh` **unsets `OPENCODE_API_KEY` by default** (the
+  key in `.env.deploy` is stale and poisons every `opencode/` call). Use
+  `OPENCODE_E2E_USE_KEY=1 OPENCODE_API_KEY=<valid>` only to exercise paid models.
+- Production note: a stale key must not be shipped into the agent env; keep the
+  coder app keyless while using free models, or rotate the key at
+  `https://opencode.ai/workspace/<workspace>/keys` before switching to paid ids.
+

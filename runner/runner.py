@@ -342,7 +342,7 @@ def run_agent_implement(card, path, llm):
     for attempt in range(1, cfg["max_iterations"] + 1):
         code, output = run_agent(prompt, cwd=path, env=env, model=model)
         if code != 0:
-            log(f"opencode agent failed card={card.get('id')} attempt={attempt} code={code}")
+            log(f"opencode agent failed card={card.get('id')} attempt={attempt} code={code} output={output[-800:]}")
             return None
         if not cfg["gate"]:
             return output[-1500:]
