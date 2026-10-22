@@ -27,6 +27,21 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends supervisor python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# uv + Spec Kit (spec-driven development). Install shims to /usr/local/bin so the
+# non-root user (UID 1000) can run `specify` without reading /root.
+ENV UV_INSTALL_DIR=/usr/local/bin \
+    UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_TOOL_DIR=/usr/local/share/uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && uv tool install specify-cli \
+    && specify version
+
+# Superpowers skills available to opencode inside the container.
+RUN git clone --depth 1 https://github.com/obra/superpowers.git /opt/superpowers \
+    && mkdir -p /home/opencode/.config/opencode/skills \
+    && cp -r /opt/superpowers/skills/* /home/opencode/.config/opencode/skills/ \
+    && chown -R 1000:1000 /home/opencode/.config/opencode
+
 # Caddy (proxy interno), pinado.
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
