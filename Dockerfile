@@ -4,7 +4,8 @@
 # oficial `codercom/code-server` já traz git/curl/dumb-init e o usuário UID 1000.
 # Três processos supervisionados pelo `supervisor`:
 #   - caddy       -> 0.0.0.0:8080  (proxy interno; única porta exposta ao Traefik)
-#   - opencode web-> 127.0.0.1:4096 (basic auth via OPENCODE_SERVER_PASSWORD)
+#   - opencode    -> 127.0.0.1:4096 (via opencode-web.sh: V2 `serve` ou V1 `web`)
+#                    (basic auth via OPENCODE_SERVER_PASSWORD)
 #   - code-server -> 127.0.0.1:8081 (senha via PASSWORD)
 # O Caddy roteia por Host: coder.* -> opencode, code.* -> code-server. (Coolify
 # não mapeia 2 portas por domínio em app padrão, por isso o proxy interno.)
@@ -68,9 +69,10 @@ COPY Caddyfile /etc/caddy/Caddyfile
 # bind-addr conflitante). O `--config` abaixo aponta para este arquivo.
 COPY code-server-config.yaml /etc/code-server/config.yaml
 COPY supervisord.conf /etc/supervisor/supervisord.conf
-COPY entrypoint.sh init-clone.sh /usr/local/bin/
+COPY entrypoint.sh init-clone.sh opencode-web.sh /usr/local/bin/
 COPY runner/runner.py /usr/local/bin/runner.py
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/init-clone.sh /usr/local/bin/runner.py \
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/init-clone.sh \
+    /usr/local/bin/runner.py /usr/local/bin/opencode-web.sh \
     && mkdir -p /home/opencode/.config/opencode /home/opencode/agenteresolve \
     && chown -R 1000:1000 /home/opencode
 

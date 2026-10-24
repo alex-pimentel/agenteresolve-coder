@@ -34,6 +34,12 @@ no Traefik.
 - `entrypoint.sh` inicia em `~/agenteresolve` (o projeto) e dispara o clone dos 24
   repos em `$HOME/agenteresolve/<repo>` (shallow, em background, idempotente).
 - auto-update do opencode desligado (`/etc/opencode/opencode.json`, tier gerenciado).
+- O supervisor chama `/usr/local/bin/opencode-web.sh`, não o binário direto. O
+  wrapper usa o **V2** (`$HOME/.opencode/bin/opencode serve`) quando ele existe no
+  volume e cai para o **V1** pinado na imagem (`opencode web`) quando não existe.
+  Isso evita o 502 causado por V1 + config no schema V2 (`permissions`), que faz o
+  processo morrer em loop de restart. Se o config exigir V2 e o binário não
+  estiver instalado, o wrapper sai com código 78 em vez de subir um servidor quebrado.
 
 ## Volume persistente (montado pelo Coolify)
 
